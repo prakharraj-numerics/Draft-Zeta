@@ -1,0 +1,28 @@
+name: Derive per-input zeta precision
+on:
+  push:
+    paths:
+      - derive_per_input_precision.cpp
+      - .github/workflows/derive-per-input-precision.yml
+  workflow_dispatch:
+jobs:
+  derive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FLINT
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build
+        run: g++ -O3 -march=native -std=c++20 derive_per_input_precision.cpp -lflint -lmpfr -lgmp -lm -o derive_per_input_precision
+      - name: Derive and validate
+        run: ./derive_per_input_precision 2>&1 | tee per_input_precision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: per-input-precision
+          path: |
+            per_input_precision.txt
+            precision_lut_1_16.txt
