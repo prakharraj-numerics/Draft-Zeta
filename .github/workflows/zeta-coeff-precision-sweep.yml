@@ -1,0 +1,30 @@
+name: Zeta coefficient precision sweep
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_coeff_precision_sweep.cpp'
+      - '.github/workflows/zeta-coeff-precision-sweep.yml'
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev libmpfr-dev
+      - name: Build
+        run: g++ -O3 -march=native -std=c++20 -DNDEBUG zeta53_coeff_precision_sweep.cpp -lflint -lmpfr -lgmp -lm -o sweep
+      - name: Run
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./sweep 2>&1 | tee result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeta-coeff-precision-sweep
+          path: result.txt
