@@ -1,6 +1,6 @@
-#include <arb.h>
-#include <arb_poly.h>
-#include <arf.h>
+#include <flint/arb.h>
+#include <flint/arb_poly.h>
+#include <flint/arf.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,7 +28,7 @@ int main(void){
   arb_one(one); arb_poly_set_coeff_si(s,0,-2); arb_poly_set_coeff_si(s,1,1);
   fprintf(stderr,"Generating %d zeta Taylor coefficients...\n",MAXT);
   arb_poly_zeta_series(z,s,one,0,MAXT+1,PREC);
-  arb_set_ui(pow3,9); /* 3^(m+2), starts m=0 */
+  arb_set_ui(pow3,9);
   for(int m=0;m<MAXT;m++){
     arb_poly_get_coeff_arb(c,z,m+1);
     chi[m]=arb_to_hi_lo(c,&clo[m]);
