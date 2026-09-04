@@ -1,0 +1,9 @@
+#include <flint/arb.h>
+#include <flint/arb_poly.h>
+#include <flint/arf.h>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <vector>
+static uint64_t key(double x){union{double d;uint64_t u;}v{x};return(v.u>>63)?~v.u:(v.u|0x8000000000000000ULL);}static uint64_t ud(double a,double b){auto x=key(a),y=key(b);return x>y?x-y:y-x;}static int rule(double a){double t;if(a<3)t=10+10.5*a-2.14*a*a;else if(a<=10)t=11+5*a;else if(a<=40)t=11+4.54*a+.0485*a*a;else t=-37+6.85*a+.0194*a*a;return std::max(6,(int)ceil(t)+1);}
+int main(){const int P=8192,M=1000;double A[]={81.764554025359956,100.10072209666959,100.0,101.0,102.0,75.0,50.0,40.0,20.0,10.0,4.0,2.9};arb_poly_t s,z;arb_poly_init(s);arb_poly_init(z);arb_t one,c,tc,p3,tmp,a,ss,ref,sum,pow,base,third;for(auto*x:{&one,&c,&tc,&p3,&tmp,&a,&ss,&ref,&sum,&pow,&base,&third})arb_init(*x);arb_one(one);arb_poly_set_coeff_si(s,0,-2);arb_poly_set_coeff_si(s,1,1);arb_poly_zeta_series(z,s,one,0,M+1,P);std::vector<arb_struct>C(M);arb_set_ui(p3,9);for(int m=0;m<M;m++){arb_init(C.data()+m);arb_poly_get_coeff_arb(c,z,m+1);arb_inv(tmp,p3,P);arb_add(C.data()+m,c,tmp,P);arb_mul_ui(p3,p3,3,P);}arb_one(third);arb_div_ui(third,third,3,P);for(double ad:A){arb_set_d(a,ad);arb_sub_ui(ss,a,2,P);arb_zeta(ref,ss,P);double rd=arf_get_d(arb_midref(ref),ARF_RND_NEAR);arb_sub_ui(tmp,a,3,P);arb_inv(base,tmp,P);arb_add(base,base,third,P);arb_set(pow,a);arb_set(sum,base);int first=0;uint64_t atRule=0;int R=rule(ad);for(int m=0;m<M;m++){arb_mul(tmp,C.data()+m,pow,P);arb_add(sum,sum,tmp,P);double y=arf_get_d(arb_midref(sum),ARF_RND_NEAR);uint64_t e=ud(y,rd);if(m+1==R)atRule=e;if(!first&&e<=1)first=m+1;arb_mul(pow,pow,a,P);}printf("a=%.17g RULE=%d RULE_ULP=%llu TRUE_FIRST=%d EXTRA=%d\n",ad,R,(unsigned long long)atRule,first,first?first-R:9999);}for(auto&x:C)arb_clear(&x);for(auto*x:{&third,&base,&pow,&sum,&ref,&ss,&a,&tmp,&p3,&tc,&c,&one})arb_clear(*x);arb_poly_clear(z);arb_poly_clear(s);flint_cleanup();}
