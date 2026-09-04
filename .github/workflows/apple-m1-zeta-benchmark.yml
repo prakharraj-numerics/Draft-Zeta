@@ -1,0 +1,54 @@
+name: Apple M1 zeta benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'bench_apple_m1_boost_zeta.cpp'
+      - '.github/workflows/apple-m1-zeta-benchmark.yml'
+
+jobs:
+  apple-m1-zeta:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Identify Apple silicon runner
+        run: |
+          echo '=== uname ==='
+          uname -a
+          uname -m
+          echo '=== CPU ==='
+          sysctl -n machdep.cpu.brand_string || true
+          sysctl -n hw.physicalcpu || true
+          sysctl -n hw.logicalcpu || true
+          system_profiler SPHardwareDataType || true
+          echo '=== compiler ==='
+          clang++ --version
+
+      - name: Install Boost
+        run: |
+          if ! brew list boost >/dev/null 2>&1; then
+            brew install boost
+          fi
+          echo "BOOST_PREFIX=$(brew --prefix boost)"
+
+      - name: Build benchmark
+        run: |
+          clang++ -O3 -DNDEBUG -std=c++20 -mcpu=native -fno-fast-math -ffp-contract=off \
+            -I"$(brew --prefix boost)/include" \
+            bench_apple_m1_boost_zeta.cpp -o bench_apple_m1_boost_zeta
+
+      - name: Benchmark zeta on M1
+        run: |
+          ./bench_apple_m1_boost_zeta | tee apple_m1_zeta_results.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-m1-zeta-results
+          path: apple_m1_zeta_results.txt
