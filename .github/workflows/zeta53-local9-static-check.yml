@@ -9,6 +9,7 @@ on:
       - 'zeta53_local9_static_check.cpp'
       - '.github/workflows/zeta53-local9-static-check.yml'
 
+# Validation trigger after generated static table commit.
 jobs:
   xeon:
     timeout-minutes: 45
