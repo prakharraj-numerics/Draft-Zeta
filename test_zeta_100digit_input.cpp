@@ -8,15 +8,19 @@
 #undef main
 
 int main() {
-    const char *xstr = "5.9419857130432093003992359016041690900861028398146838103685586021483884727797660108966186794963460823";
-    const char *ratio = "59419857130432093003992359016041690900861028398146838103685586021483884727797660108966186794963460823/10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+    const char *xstr = "0.2941985713043209300399235901604169090086102839814683810368558602148388472779766010896618679496346082";
+    const char *ratio = "2941985713043209300399235901604169090086102839814683810368558602148388472779766010896618679496346082/10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
     double x = std::strtod(xstr, nullptr);
     Runtime rt;
     double a = x + 2.0;
     int bits = rt.precision(a);
     int T = terms(a);
-    double ours = rt.eval_cached_x(x, bits, T);
+
+    // The current batch/cache path is provisioned for x>1 (a>=3).
+    // For this one-off sub-1 accuracy probe, exercise the same underlying
+    // series machinery directly at the precision selected by the current LUT.
+    double ours = rt.eval_source(a, bits);
     double ref_rounded_input = rt.reference_x(x);
 
     fmpq_t q;
@@ -35,6 +39,7 @@ int main() {
 
     std::printf("X_EXACT=%s\n", xstr);
     std::printf("X_BINARY64=%.17g\n", x);
+    std::printf("PATH=UNDERLYING_SERIES_DIRECT_CURRENT_PRECISION\n");
     std::printf("WORK_BITS=%d TERMS=%d\n", bits, T);
     std::printf("OURS=%.17g\n", ours);
     std::printf("REF_ZETA_BINARY64_INPUT=%.17g\n", ref_rounded_input);
