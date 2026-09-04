@@ -1,0 +1,65 @@
+name: EPYC Zen 5 zeta benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'bench_epyc_zen5_boost_zeta.cpp'
+      - '.github/workflows/epyc-zen5-zeta-benchmark.yml'
+
+jobs:
+  probe-and-benchmark:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Identify CPU and gate on EPYC Zen 5
+        id: cpu
+        shell: bash
+        run: |
+          echo '=== CPU identity ==='
+          lscpu
+          echo '=== model name ==='
+          grep -m1 'model name' /proc/cpuinfo || true
+          vendor=$(lscpu | awk -F: '/Vendor ID/{gsub(/^[ \t]+/,"",$2); print $2}')
+          family=$(lscpu | awk -F: '/CPU family/{gsub(/^[ \t]+/,"",$2); print $2}')
+          model=$(lscpu | awk -F: '/^Model:/{gsub(/^[ \t]+/,"",$2); print $2}')
+          echo "VENDOR=$vendor FAMILY=$family MODEL=$model SHARD=${{ matrix.shard }}"
+          if [[ "$vendor" == "AuthenticAMD" && "$family" == "26" ]]; then
+            echo 'ZEN5=1' | tee -a "$GITHUB_OUTPUT"
+            echo 'MATCH=AMD_EPYC_5TH_GEN_ZEN5'
+          else
+            echo 'ZEN5=0' | tee -a "$GITHUB_OUTPUT"
+            echo 'MATCH=NO'
+          fi
+
+      - name: Install Boost 1.83 headers
+        if: steps.cpu.outputs.ZEN5 == '1'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libboost1.83-dev
+          grep '#define BOOST_LIB_VERSION' /usr/include/boost/version.hpp
+
+      - name: Build benchmark
+        if: steps.cpu.outputs.ZEN5 == '1'
+        run: |
+          g++ -O3 -DNDEBUG -std=c++20 -march=native -fno-fast-math -ffp-contract=off \
+            bench_epyc_zen5_boost_zeta.cpp -o bench_epyc_zen5_boost_zeta
+
+      - name: Benchmark zeta on EPYC Zen 5
+        if: steps.cpu.outputs.ZEN5 == '1'
+        run: |
+          ./bench_epyc_zen5_boost_zeta | tee epyc_zen5_zeta_results_${{ matrix.shard }}.txt
+
+      - name: Upload result
+        if: steps.cpu.outputs.ZEN5 == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: epyc-zen5-zeta-results-${{ matrix.shard }}
+          path: epyc_zen5_zeta_results_${{ matrix.shard }}.txt
