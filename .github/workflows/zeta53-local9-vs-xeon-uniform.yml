@@ -27,6 +27,13 @@ jobs:
           MODEL="$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
           echo "CPU_MODEL=$MODEL"
           if [[ "$MODEL" == *"6973P-C"* ]] && grep -m1 '^flags' /proc/cpuinfo | grep -qw avx512f; then echo eligible=1 >> "$GITHUB_OUTPUT"; else echo eligible=0 >> "$GITHUB_OUTPUT"; fi
+      - name: Install Boost math headers
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libboost-math-dev
       - name: Build
         if: steps.gate.outputs.eligible == '1'
         run: |
