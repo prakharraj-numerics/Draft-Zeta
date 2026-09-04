@@ -1,0 +1,25 @@
+name: Adaptive candidate 5000
+on:
+  push:
+    paths:
+      - zeta53_adaptive_candidate.cpp
+      - .github/workflows/adaptive-candidate-5000.yml
+  workflow_dispatch:
+jobs:
+  accuracy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FLINT
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build
+        run: g++ -O3 -std=c++20 zeta53_adaptive_candidate.cpp -lflint -lmpfr -lgmp -lm -o adaptive_candidate
+      - name: Test 5000 fixed-rule inputs
+        run: ./adaptive_candidate 2>&1 | tee adaptive_candidate_5000.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-candidate-5000
+          path: adaptive_candidate_5000.txt
