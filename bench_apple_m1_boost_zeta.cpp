@@ -33,15 +33,20 @@ static std::vector<Input> make_inputs(size_t n) {
     return v;
 }
 
-static inline double apple_m1_zeta(double x) {
-    // Apple Accelerate/vForce has no Riemann-zeta routine.  For a native
-    // Apple-silicon platform comparison we therefore use the same portable
-    // Boost.Math binary64 zeta comparator as the Xeon benchmark.
-    return boost::math::zeta(x);
+__attribute__((noinline))
+static void boost_zeta_batch(const Input* in, size_t n, double* out) {
+    for (size_t i = 0; i < n; ++i)
+        out[i] = boost::math::zeta(in[i].x);
+}
+
+static inline void benchmark_barrier(const void* p) {
+    // Make every output store observable to the optimizer without adding an
+    // O(n) checksum to the timed region.
+    asm volatile("" : : "r"(p) : "memory");
 }
 
 template <class F>
-static double median_ns_per_input(size_t n, int reps, F&& fn, volatile double& sink) {
+static double median_ns_per_input(size_t n, int reps, F&& fn) {
     constexpr int SAMPLES = 11;
     std::vector<double> samples;
     samples.reserve(SAMPLES);
@@ -50,7 +55,6 @@ static double median_ns_per_input(size_t n, int reps, F&& fn, volatile double& s
         for (int r = 0; r < reps; ++r)
             fn();
         auto t1 = std::chrono::steady_clock::now();
-        sink += 0.0;
         samples.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count()
                           / static_cast<double>(reps * n));
     }
@@ -72,14 +76,13 @@ int main() {
     }
     std::printf("INPUT_HASH=%016llx COUNT=%zu DOMAIN_X=(1,100) INPUT_KIND=NONINTEGER_RATIONAL_FRACTIONS\n",
                 static_cast<unsigned long long>(h), in.size());
-    std::printf("IMPLEMENTATION=boost::math::zeta<double> PLATFORM=APPLE_SILICON_NATIVE\n");
+    std::printf("IMPLEMENTATION=boost::math::zeta<double> PLATFORM=APPLE_SILICON_NATIVE ANTI_DCE=NOINLINE+MEMORY_BARRIER\n");
 
-    volatile double sink = 0.0;
+    double checksum = 0.0;
     for (size_t n : sizes) {
         auto batch = [&]() {
-            for (size_t i = 0; i < n; ++i)
-                out[i] = apple_m1_zeta(in[i].x);
-            sink += out[n / 2];
+            boost_zeta_batch(in.data(), n, out.data());
+            benchmark_barrier(out.data());
         };
 
         for (int w = 0; w < 5; ++w)
@@ -88,11 +91,14 @@ int main() {
         // Keep each sample large enough to amortize timer noise while avoiding
         // excessive CI time at the largest batches.
         int reps = std::max(1, static_cast<int>((2500000ULL + n - 1) / n));
-        double ns = median_ns_per_input(n, reps, batch, sink);
+        double ns = median_ns_per_input(n, reps, batch);
+
+        // Read values after timing so the benchmark also has a concrete sanity checksum.
+        checksum += out[0] + out[n / 2] + out[n - 1];
         std::printf("BATCH=%zu REPS=%d APPLE_M1_BOOST_ZETA_NS_PER_INPUT=%.6f\n",
                     n, reps, ns);
     }
 
-    std::printf("SINK=%.17g\n", static_cast<double>(sink));
+    std::printf("CHECKSUM=%.17g\n", checksum);
     return 0;
 }
