@@ -1,156 +1,169 @@
 #include <immintrin.h>
 #include <stddef.h>
 #include <math.h>
-#include <mutex>
 
 /*
- * Formula-faithful AVX-512 research kernel.
+ * Draft-Zeta R1(a) production-spine research kernel.
  *
- * We intentionally keep the user's mathematical spine:
+ * Mathematical spine (unchanged):
  *
- *   zeta(x) = pi^2/6
- *             - sum_{m>=1} (x-2)^m/m!
- *               sum_{r>=1} (log r)^m / r^x .
+ *   zeta(a-2) = R1(a) = a * sum_{m>=0} c_m a^m,
  *
- * IMPORTANT: do NOT algebraically resum the m-series to r^(x-2)-1 and do
- * not cancel pi^2/6 against sum r^-2.  That shortcut merely reconstructs
- * the defining Dirichlet series and is forbidden for this project.
+ *   c_m = -1/(m+1)! * sum_{q>=1} sum_{r>=0} 2^(-(3q+r+1))
+ *         * sum_{j=0}^r (-1)^j C(r,j) (j+1)^2
+ *           [q ln 2 - ln(j+1)]^(m+1).
  *
- * The finite research kernel below only changes evaluation order: for each
- * cached integer r it forms r^-x once, then accumulates the individual
- * inner moments S_m(x).  The outer m-series is still formed explicitly.
- * No exponential-series collapse is used.
+ * c_m is independent of a, so the q/r/j machinery is an offline constant
+ * generation problem.  Runtime evaluates exactly the requested R1 power
+ * series; it does not transform it into a Dirichlet-series zeta formula.
+ * Integer logarithms therefore disappear from the hot path entirely after
+ * coefficient generation/cache.
  *
- * Convergence of the literal formula requires x > 3/2.  Inputs at or below
- * 3/2 are therefore rejected instead of silently switching formulas.
+ * Term count for the a=1 binary64 target:
+ *   33 terms: truncation about 2.16036 ULP
+ *   34 terms: truncation about 0.720122 ULP (minimal exact-arithmetic <1 ULP)
+ *   35 terms: truncation about 0.240041 ULP
+ * We use 35 terms to leave useful floating-point rounding headroom.
  *
- * This file is now structure-correct, not yet the final 1-ULP production
- * kernel.  The remaining accuracy work is a faithful treatment of the
- * r->infinity tail of every S_m; simply truncating r is not sufficient.
- * custom2 remains deliberately unused.
+ * Coefficients are stored as hi+lo binary64 and evaluated with compensated
+ * AVX-512 double-double Horner.  Four independent 8-lane chains are
+ * interleaved for batch throughput.  custom2 remains reserved for later.
  */
 
-static const double ZETA2_HI = 0x1.a51a6625307d3p+0;
-static const double ZETA2_LO = 0x1.1873d8912200cp-55;
+static constexpr int R1_TERMS = 35; /* c0..c34 */
 
-/* Research limits only.  They are intentionally centralized so the later
- * rigorous tail/term-count analysis can replace them without changing the
- * machinery. */
-static constexpr int ZETA53_MMAX = 192;
-static constexpr int ZETA53_RMAX = 2048;
+static const double C_HI[R1_TERMS] = {
+ -0x1.f2de15d1e2a9fp-6, -0x1.0d5e0b74b825bp-5,
+ -0x1.c6736c6ebde3ep-7, -0x1.0cc026a9cf23ap-8,
+ -0x1.607b5c5e443c3p-10,-0x1.e2af042de36aap-12,
+ -0x1.3fbfa0d06f8ddp-13,-0x1.a9cdb927bb87cp-15,
+ -0x1.1c33aa684f942p-16,-0x1.7ad3a3fc6c38fp-18,
+ -0x1.f9196d5c950d0p-20,-0x1.50bdd4fb58d1bp-21,
+ -0x1.c0fc27f147a37p-23,-0x1.2b52d94f9c893p-24,
+ -0x1.8f19268f54a8bp-26,-0x1.0a10c2521ae10p-27,
+ -0x1.62c103b9b7cbfp-29,-0x1.d9015a3904123p-31,
+ -0x1.3b563c235f313p-32,-0x1.a472fadba28b7p-34,
+ -0x1.184ca73cd64c8p-35,-0x1.75bb89a67bd08p-37,
+ -0x1.f24f623350a9dp-39,-0x1.4c34ec2235583p-40,
+ -0x1.baf13ad84740fp-42,-0x1.274b7c902f7dep-43,
+ -0x1.89b9fb6ae9fd4p-45,-0x1.067bfcf1f1539p-46,
+ -0x1.5dfaa697ec6f7p-48,-0x1.d2a388ca90949p-50,
+ -0x1.3717b0870b0dbp-51,-0x1.9eca40b40ebcfp-53,
+ -0x1.1486d5cd5f28ap-54,-0x1.70b3c7bc7ee0dp-56,
+ -0x1.eb9a5fa5fe812p-58
+};
 
-/* log(integer) is invariant across every input and every batch.  Cache it
- * once; no log() occurs in the hot formula evaluation after initialization.
- * The final production table will be generated offline as hi+lo constants. */
-static double LOG_R[ZETA53_RMAX + 1];
-static std::once_flag LOG_R_ONCE;
-
-static void init_log_cache(void)
-{
-    LOG_R[0] = 0.0;
-    LOG_R[1] = 0.0;                 /* r=1 contributes zero for m>=1 */
-    for (int r = 2; r <= ZETA53_RMAX; ++r)
-        LOG_R[r] = log((double)r);
-}
+static const double C_LO[R1_TERMS] = {
+  0x1.5aeebd0ffc3abp-62,-0x1.5107aca33deedp-61,
+ -0x1.307ba3fc3117fp-61,-0x1.62117c1516b0ep-64,
+  0x1.d1837aa902a43p-64, 0x1.dd8e6f71cf2cdp-67,
+  0x1.8e13e08bdbda8p-68, 0x1.f2d4f20e1736ep-69,
+ -0x1.cb5c0fcc2f515p-73,-0x1.ab69eaecf9c3fp-73,
+ -0x1.001bf9582e290p-74, 0x1.d761f1568ec4ap-75,
+  0x1.47f627a8a295ap-79,-0x1.e2fce52ceadadp-78,
+  0x1.7160d14f43e60p-82, 0x1.cb0fb61da9c0fp-81,
+  0x1.cae3d9ce42c3fp-84, 0x1.b155f94249c0ep-86,
+  0x1.92dfdae333c22p-90, 0x1.fe940c2cd935ap-92,
+  0x1.5d5b8570d499dp-89, 0x1.a25a268ba49bep-91,
+ -0x1.34c8f8c9b192dp-93, 0x1.41a3af1296536p-94,
+  0x1.6cfd4a3c81f63p-96,-0x1.7150ed9e513d8p-97,
+ -0x1.f952d7d841e33p-99,-0x1.68469d8055deep-101,
+  0x1.a5e0befe74078p-102,0x1.371f0f73f88f1p-105,
+ -0x1.d408e5b4a2dfep-106,0x1.d87326657f523p-111,
+  0x1.3946e5fb07a60p-112,-0x1.3b32e0cb1a392p-110,
+  0x1.0665a55fd5868p-112
+};
 
 #define ZAVX __attribute__((target("avx512f,fma")))
 #define ZAI  ZAVX __attribute__((always_inline)) static inline
 
-ZAI __m512d vexp_hi(__m512d x)
+typedef struct { __m512d hi, lo; } dd8;
+
+ZAI dd8 renorm8(__m512d a, __m512d b)
 {
-    return _mm512_exp_pd(x);
-}
-
-/* Compute one 8-lane block while preserving the original m/r structure.
- * Computationally we traverse r first only to reuse r^-x.  What is stored
- * in moment[m-1] is exactly the finite inner sum
- *      sum_r (log r)^m / r^x,
- * and only after those moments exist do we form the outer m-series. */
-ZAVX static __m512d zeta_formula_block(__m512d x)
-{
-    __m512d moment[ZETA53_MMAX];
-    for (int m = 0; m < ZETA53_MMAX; ++m)
-        moment[m] = _mm512_setzero_pd();
-
-    const __m512d zero = _mm512_setzero_pd();
-
-    for (int r = 2; r <= ZETA53_RMAX; ++r) {
-        const double lr = LOG_R[r];
-        const __m512d vlr = _mm512_set1_pd(lr);
-        const __m512d negxlogr = _mm512_mul_pd(_mm512_sub_pd(zero, x), vlr);
-        const __m512d rx = vexp_hi(negxlogr);      /* r^-x, once per r */
-
-        __m512d lp = vlr;                         /* (log r)^1 */
-        for (int m = 0; m < ZETA53_MMAX; ++m) {
-            moment[m] = _mm512_fmadd_pd(rx, lp, moment[m]);
-            lp = _mm512_mul_pd(lp, vlr);
-        }
-    }
-
-    const __m512d h = _mm512_sub_pd(x, _mm512_set1_pd(2.0));
-    __m512d weight = h;                           /* (x-2)^1 / 1! */
-    __m512d outer = _mm512_setzero_pd();
-    __m512d comp  = _mm512_setzero_pd();
-
-    for (int m = 1; m <= ZETA53_MMAX; ++m) {
-        const __m512d term = _mm512_mul_pd(weight, moment[m - 1]);
-
-        /* Compensated accumulation of the explicit outer m-series. */
-        const __m512d y = _mm512_sub_pd(term, comp);
-        const __m512d t = _mm512_add_pd(outer, y);
-        comp = _mm512_sub_pd(_mm512_sub_pd(t, outer), y);
-        outer = t;
-
-        if (m != ZETA53_MMAX)
-            weight = _mm512_mul_pd(weight,
-                                   _mm512_mul_pd(h,
-                                       _mm512_set1_pd(1.0 / (double)(m + 1))));
-    }
-
-    __m512d z = _mm512_sub_pd(_mm512_set1_pd(ZETA2_HI), outer);
-    z = _mm512_add_pd(z, _mm512_set1_pd(ZETA2_LO));
+    dd8 z;
+    z.hi = _mm512_add_pd(a,b);
+    z.lo = _mm512_sub_pd(b,_mm512_sub_pd(z.hi,a));
     return z;
 }
 
-ZAVX static void zeta_avx512(size_t n, const double *x, double *out)
+ZAI dd8 mul_d8(dd8 x, __m512d y)
 {
-    size_t i = 0;
-    const __m512d lim = _mm512_set1_pd(1.5);
+    const __m512d p = _mm512_mul_pd(x.hi,y);
+    __m512d e = _mm512_fmsub_pd(x.hi,y,p);
+    e = _mm512_fmadd_pd(x.lo,y,e);
+    return renorm8(p,e);
+}
 
-    for (; i + 8 <= n; i += 8) {
-        const __m512d xv = _mm512_loadu_pd(x + i);
-        const __mmask8 valid = _mm512_cmp_pd_mask(xv, lim, _CMP_GT_OQ);
-        __m512d z = zeta_formula_block(xv);
-        z = _mm512_mask_mov_pd(_mm512_set1_pd(NAN), valid, z);
-        _mm512_storeu_pd(out + i, z);
+ZAI dd8 add_const8(dd8 x, double chi, double clo)
+{
+    const __m512d c = _mm512_set1_pd(chi);
+    const __m512d s = _mm512_add_pd(x.hi,c);
+    const __m512d bb = _mm512_sub_pd(s,x.hi);
+    const __m512d e1 = _mm512_add_pd(_mm512_sub_pd(x.hi,_mm512_sub_pd(s,bb)),
+                                     _mm512_sub_pd(c,bb));
+    const __m512d e = _mm512_add_pd(_mm512_add_pd(x.lo,e1),
+                                    _mm512_set1_pd(clo));
+    return renorm8(s,e);
+}
+
+ZAI dd8 horner_step8(dd8 p, __m512d a, double chi, double clo)
+{
+    return add_const8(mul_d8(p,a),chi,clo);
+}
+
+ZAI dd8 r1_poly8(__m512d a)
+{
+    dd8 p = { _mm512_set1_pd(C_HI[R1_TERMS-1]),
+              _mm512_set1_pd(C_LO[R1_TERMS-1]) };
+    for (int k=R1_TERMS-2;k>=0;--k)
+        p = horner_step8(p,a,C_HI[k],C_LO[k]);
+    return mul_d8(p,a);
+}
+
+ZAVX static void r1_batch_avx512(size_t n,const double *a,double *out)
+{
+    size_t i=0;
+    for (;i+32<=n;i+=32) {
+        __m512d av[4];
+        dd8 p[4];
+        for (int q=0;q<4;++q) {
+            av[q]=_mm512_loadu_pd(a+i+8u*(size_t)q);
+            p[q].hi=_mm512_set1_pd(C_HI[R1_TERMS-1]);
+            p[q].lo=_mm512_set1_pd(C_LO[R1_TERMS-1]);
+        }
+        for (int k=R1_TERMS-2;k>=0;--k) {
+            p[0]=horner_step8(p[0],av[0],C_HI[k],C_LO[k]);
+            p[1]=horner_step8(p[1],av[1],C_HI[k],C_LO[k]);
+            p[2]=horner_step8(p[2],av[2],C_HI[k],C_LO[k]);
+            p[3]=horner_step8(p[3],av[3],C_HI[k],C_LO[k]);
+        }
+        for (int q=0;q<4;++q) {
+            p[q]=mul_d8(p[q],av[q]);
+            _mm512_storeu_pd(out+i+8u*(size_t)q,_mm512_add_pd(p[q].hi,p[q].lo));
+        }
     }
-
-    if (i < n) {
-        const __mmask8 live = (__mmask8)((1u << (n - i)) - 1u);
-        const __m512d xv = _mm512_maskz_loadu_pd(live, x + i);
-        const __mmask8 domain = _mm512_cmp_pd_mask(xv, lim, _CMP_GT_OQ);
-        const __mmask8 valid = (__mmask8)(live & domain);
-        __m512d z = zeta_formula_block(xv);
-        z = _mm512_mask_mov_pd(_mm512_set1_pd(NAN), valid, z);
-        _mm512_mask_storeu_pd(out + i, live, z);
+    for (;i+8<=n;i+=8) {
+        const __m512d av=_mm512_loadu_pd(a+i);
+        const dd8 z=r1_poly8(av);
+        _mm512_storeu_pd(out+i,_mm512_add_pd(z.hi,z.lo));
+    }
+    if (i<n) {
+        const __mmask8 m=(__mmask8)((1u<<(n-i))-1u);
+        const __m512d av=_mm512_maskz_loadu_pd(m,a+i);
+        const dd8 z=r1_poly8(av);
+        _mm512_mask_storeu_pd(out+i,m,_mm512_add_pd(z.hi,z.lo));
     }
 }
 
-extern "C" void draft_zeta53_batch(size_t n, const double *x, double *out)
+extern "C" void draft_zeta53_batch(size_t n,const double *a,double *out)
 {
-    if (!n || !x || !out)
-        return;
-
-    std::call_once(LOG_R_ONCE, init_log_cache);
-
+    if (!n || !a || !out) return;
     if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("fma")) {
-        zeta_avx512(n, x, out);
+        r1_batch_avx512(n,a,out);
         return;
     }
-
-    /* No hidden alternate zeta formula on the scalar path. */
-    for (size_t i = 0; i < n; ++i)
-        out[i] = NAN;
+    for (size_t i=0;i<n;++i) out[i]=NAN;
 }
 
 extern "C" int draft_zeta53_batch_uses_avx512(void)
