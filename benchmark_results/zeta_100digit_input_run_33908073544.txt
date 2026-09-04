@@ -1,0 +1,22 @@
+Run: 33908073544
+Test input (exact decimal, 100 digits after decimal):
+5.9419857130432093003992359016041690900861028398146838103685586021483884727797660108966186794963460823
+
+Binary64 input seen by current kernel:
+5.9419857130432092
+
+Current kernel settings for this input:
+WORK_BITS=56
+TERMS=52
+
+OURS=1.0181056690688175
+REF_ZETA_BINARY64_INPUT=1.0181056690688175
+REF_ZETA_EXACT_100DIGIT_INPUT=1.0181056690688175
+ULP_OURS_VS_BINARY64_REF=0
+ULP_OURS_VS_EXACT_INPUT_REF=0
+ULP_BINARY64_REF_VS_EXACT_INPUT_REF=0
+
+Exact-input high-precision reference:
+1.0181056690688175491005512743332094201505815888563586494746642159054842506493476
+
+Conclusion: for this tested 5.x input with 100 digits after the decimal point, the current Zeta kernel's binary64 output is exactly the same correctly rounded double as the high-precision Zeta value of the exact 100-digit decimal input (0 ULP difference).
