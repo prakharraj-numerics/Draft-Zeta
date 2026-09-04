@@ -1,0 +1,30 @@
+name: Zeta 384 backend lab
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_384_backend_lab.cpp'
+      - '.github/workflows/zeta384-backend-lab.yml'
+jobs:
+  lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev libmpfr-dev
+      - name: Build
+        run: |
+          g++ -O3 -march=native -std=c++20 -DNDEBUG zeta53_384_backend_lab.cpp -lflint -lmpfr -lgmp -lm -o zeta384_lab
+      - name: Run
+        run: |
+          lscpu | grep -E 'Model name|CPU\(s\)|Thread|Core|Socket|L[123] cache' | tee result.txt
+          ./zeta384_lab 2>&1 | tee -a result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeta384-backend-lab
+          path: result.txt
