@@ -130,8 +130,8 @@ int main(){
     for(size_t n:sizes){
         ours_batch(rt,in,n,o1,bs);intel_batch(in,n,o2);for(int w=0;w<3;w++){ours_batch(rt,in,n,o1,bs);intel_batch(in,n,o2);sink+=o1[w%n]+o2[w%n];}
         int reps=std::max(1,(int)(30000/n));
-        double ours=median_ns(n,reps,[&](){ours_batch(rt,in,n,o1,bs);},sink);
-        double intel=median_ns(n,reps,[&](){intel_batch(in,n,o2);},sink);
+        double ours=median_ns(n,reps,[&](){ours_batch(rt,in,n,o1,bs);sink+=o1[0];},sink);
+        double intel=median_ns(n,reps,[&](){intel_batch(in,n,o2);sink+=o2[0];},sink);
         std::printf("BATCH=%zu REPS=%d OURS_NS_PER_EL=%.6f INTEL_XEON_NS_PER_EL=%.6f INTEL_OVER_OURS=%.6f\n",n,reps,ours,intel,intel/ours);
     }
     std::printf("SINK=%.17g\n",(double)sink);flint_cleanup();return 0;
