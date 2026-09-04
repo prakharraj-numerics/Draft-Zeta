@@ -1,0 +1,48 @@
+name: Zeta53 AVX512 multicomponent
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_avx512_multicomponent.cpp'
+      - '.github/workflows/zeta53-avx512-multicomponent.yml'
+jobs:
+  xeon:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 64
+      matrix:
+        slot: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require Intel Xeon 6973P-C + AVX512
+        id: gate
+        shell: bash
+        run: |
+          MODEL="$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+          echo "CPU_MODEL=$MODEL"
+          if [[ "$MODEL" == *"6973P-C"* ]] && grep -m1 '^flags' /proc/cpuinfo | grep -qw avx512f; then echo eligible=1 >> "$GITHUB_OUTPUT"; else echo eligible=0 >> "$GITHUB_OUTPUT"; fi
+      - name: Dependencies
+        if: steps.gate.outputs.eligible == '1'
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build
+        if: steps.gate.outputs.eligible == '1'
+        run: |
+          g++ -O3 -march=native -mavx512f -mavx512dq -mfma -funroll-loops -std=c++20 -DNDEBUG -fno-fast-math -ffp-contract=off zeta53_avx512_multicomponent.cpp -lflint -lmpfr -lgmp -lm -o zeta_avx512_mc
+      - name: Run pinned
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          CPU=$(taskset -pc $$ | sed 's/.*: //' | cut -d, -f1 | cut -d- -f1)
+          { echo "PIN_CPU=$CPU"; lscpu | grep -E 'Model name|L[123] cache'; grep -m1 '^flags' /proc/cpuinfo | grep -o 'avx512[^ ]*' | tr '\n' ' '; echo; taskset -c "$CPU" ./zeta_avx512_mc; } 2>&1 | tee result.txt
+      - name: Upload
+        if: steps.gate.outputs.eligible == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeta-avx512-mc-${{ matrix.slot }}
+          path: result.txt
