@@ -8,7 +8,7 @@
 
 #define MAXT 1400
 #define N 1000
-#define PREC 768
+#define PREC 8192
 
 static double chi[MAXT], clo[MAXT], thi[MAXT], tlo[MAXT];
 
@@ -26,7 +26,7 @@ static double uni(void){ return (nextu()>>11)*(1.0/9007199254740992.0); }
 int main(void){
   arb_poly_t s,z; arb_t one,c,t,pow3,ss,ref; arb_poly_init(s); arb_poly_init(z); arb_init(one); arb_init(c); arb_init(t); arb_init(pow3); arb_init(ss); arb_init(ref);
   arb_one(one); arb_poly_set_coeff_si(s,0,-2); arb_poly_set_coeff_si(s,1,1);
-  fprintf(stderr,"Generating %d zeta Taylor coefficients...\n",MAXT);
+  fprintf(stderr,"Generating %d zeta Taylor coefficients at %d bits...\n",MAXT,PREC);
   arb_poly_zeta_series(z,s,one,0,MAXT+1,PREC);
   arb_set_ui(pow3,9);
   for(int m=0;m<MAXT;m++){
