@@ -1,0 +1,30 @@
+name: Zeta53 internal precision sweep
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_internal_precision_sweep.cpp'
+      - '.github/workflows/zeta53-internal-precision-sweep.yml'
+jobs:
+  sweep:
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev libmpfr-dev
+      - name: Build
+        run: |
+          g++ -O3 -march=native -std=c++20 -DNDEBUG zeta53_internal_precision_sweep.cpp -lflint -lmpfr -lgmp -lm -o zeta53_precision_sweep
+      - name: Sweep 53 through 384 bits
+        run: |
+          ./zeta53_precision_sweep 2>&1 | tee precision-sweep.txt
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeta53-internal-precision-sweep
+          path: precision-sweep.txt
