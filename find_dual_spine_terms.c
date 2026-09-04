@@ -19,7 +19,7 @@ static inline dd add_c(dd x,double hi,double lo){ double s=x.hi+hi; double bb=s-
 static double eval(const double *hi,const double *lo,int T,double a){ dd p={hi[T-1],lo[T-1]}; for(int k=T-2;k>=0;k--) p=add_c(mul_d(p,a),hi[k],lo[k]); p=mul_d(p,a); return p.hi+p.lo; }
 static uint64_t key(double x){ union{double d; uint64_t u;}v={x}; return (v.u>>63)?~v.u:(v.u|0x8000000000000000ULL); }
 static uint64_t ulp(double a,double b){ uint64_t x=key(a),y=key(b); return x>y?x-y:y-x; }
-static double arb_to_hi_lo(const arb_t x,double *lo){ double h=arf_get_d(arb_midref(x),ARF_RND_NEAR); arb_t t; arb_init(t); arb_set(t,x); arb_sub_d(t,t,h,PREC); *lo=arf_get_d(arb_midref(t),ARF_RND_NEAR); arb_clear(t); return h; }
+static double arb_to_hi_lo(const arb_t x,double *lo){ double h=arf_get_d(arb_midref(x),ARF_RND_NEAR); arb_t t,hb; arb_init(t); arb_init(hb); arb_set(t,x); arb_set_d(hb,h); arb_sub(t,t,hb,PREC); *lo=arf_get_d(arb_midref(t),ARF_RND_NEAR); arb_clear(hb); arb_clear(t); return h; }
 static uint64_t rng=0x9e3779b97f4a7c15ULL; static uint64_t nextu(void){ rng^=rng>>12; rng^=rng<<25; rng^=rng>>27; return rng*2685821657736338717ULL; }
 static double uni(void){ return (nextu()>>11)*(1.0/9007199254740992.0); }
 
