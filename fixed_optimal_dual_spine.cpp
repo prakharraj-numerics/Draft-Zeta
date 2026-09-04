@@ -30,33 +30,38 @@ int main(){
   for(int i=0;i<N;){ uint64_t d=den(gout), b=base(gout), f=1+(frac(gout)%(d-1)); uint64_t num=b*d+f; double s=(double)num/(double)d; if(s<=1.0||s>=100.0||s==std::floor(s)) continue; aout[i]=s+2.0; ++i; }
 
   arb_poly_t s,z; arb_poly_init(s); arb_poly_init(z);
-  arb_t one,c,tc,pow3,tmp,aa,ss,ref; arb_init(one);arb_init(c);arb_init(tc);arb_init(pow3);arb_init(tmp);arb_init(aa);arb_init(ss);arb_init(ref);
+  arb_t one,pow3,tmp,aa,ss,ref; arb_init(one);arb_init(pow3);arb_init(tmp);arb_init(aa);arb_init(ss);arb_init(ref);
   arb_one(one); arb_poly_set_coeff_si(s,0,-2); arb_poly_set_coeff_si(s,1,1);
   std::fprintf(stderr,"Generating %d coefficients at %d bits...\n",MAXT,PREC);
   arb_poly_zeta_series(z,s,one,0,MAXT+1,PREC);
 
   std::vector<double> chi(MAXT),clo(MAXT),thi(MAXT),tlo(MAXT);
-  std::vector<arb_t*> dummy;
   arb_set_ui(pow3,9);
   std::vector<arb_struct> C(MAXT), TC(MAXT);
-  for(int m=0;m<MAXT;m++){ arb_init(C.data()+m); arb_init(TC.data()+m); arb_poly_get_coeff_arb(C.data()+m,z,m+1); arb_inv(tmp,pow3,PREC); arb_add(TC.data()+m,C.data()+m,tmp,PREC); chi[m]=arb_hi_lo(C.data()+m,&clo[m]); thi[m]=arb_hi_lo(TC.data()+m,&tlo[m]); arb_mul_ui(pow3,pow3,3,PREC); }
+  for(int m=0;m<MAXT;m++){
+    arb_init(C.data()+m); arb_init(TC.data()+m);
+    arb_poly_get_coeff_arb(C.data()+m,z,m+1);
+    arb_inv(tmp,pow3,PREC); arb_add(TC.data()+m,C.data()+m,tmp,PREC);
+    chi[m]=arb_hi_lo(C.data()+m,&clo[m]); thi[m]=arb_hi_lo(TC.data()+m,&tlo[m]);
+    arb_mul_ui(pow3,pow3,3,PREC);
+  }
 
   std::vector<arb_struct> sum1(N),pow1(N),sum2(N),pow2(N),base2(N);
-  for(int i=0;i<N;i++){ arb_init(sum1.data()+i);arb_init(pow1.data()+i);arb_init(sum2.data()+i);arb_init(pow2.data()+i);arb_init(base2.data()+i);
+  for(int i=0;i<N;i++){
+    arb_init(sum1.data()+i);arb_init(pow1.data()+i);arb_init(sum2.data()+i);arb_init(pow2.data()+i);arb_init(base2.data()+i);
     arb_zero(sum1.data()+i); arb_zero(sum2.data()+i);
     arb_set_d(pow1.data()+i,ain[i]); arb_set_d(pow2.data()+i,aout[i]);
     arb_set_d(aa,ain[i]); arb_sub_ui(ss,aa,2,PREC); arb_zeta(ref,ss,PREC); rin[i]=arf_get_d(arb_midref(ref),ARF_RND_NEAR);
     arb_set_d(aa,aout[i]); arb_sub_ui(ss,aa,2,PREC); arb_zeta(ref,ss,PREC); rout[i]=arf_get_d(arb_midref(ref),ARF_RND_NEAR);
-    arb_set_d(aa,aout[i]); arb_sub_ui(tmp,aa,3,PREC); arb_inv(base2.data()+i,tmp,PREC); arb_set_ui(tmp,1); arb_div_ui(tmp,tmp,3,PREC); arb_add(base2.data()+i,base2.data()+i,tmp,PREC);
+    arb_sub_ui(tmp,aa,3,PREC); arb_inv(base2.data()+i,tmp,PREC); arb_set_ui(tmp,1); arb_div_ui(tmp,tmp,3,PREC); arb_add(base2.data()+i,base2.data()+i,tmp,PREC);
   }
 
   int best1=0,best2=0; uint64_t prevmx1=0,prevmx2=0; int prevbad1=0,prevbad2=0; uint64_t bestmx1=0,bestmx2=0;
   for(int m=0;m<MAXT;m++){
     for(int i=0;i<N;i++){
-      arb_mul(tmp,C.data()+m,pow1.data()+i,PREC); arb_add(sum1.data()+i,sum1.data()+i,tmp,PREC); arb_mul(pow1.data()+i,pow1.data()+i,aa,PREC); /* reset correctly below */
+      arb_mul(tmp,C.data()+m,pow1.data()+i,PREC); arb_add(sum1.data()+i,sum1.data()+i,tmp,PREC);
+      arb_set_d(aa,ain[i]); arb_mul(pow1.data()+i,pow1.data()+i,aa,PREC);
     }
-    /* pow1 multiplication above cannot reuse shared aa; repair powers exactly from current a. */
-    for(int i=0;i<N;i++){ arb_set_d(aa,ain[i]); if(m==0) arb_mul(pow1.data()+i,aa,aa,PREC); else arb_mul(pow1.data()+i,pow1.data()+i,aa,PREC); }
     for(int i=0;i<N;i++){
       arb_mul(tmp,TC.data()+m,pow2.data()+i,PREC); arb_add(sum2.data()+i,sum2.data()+i,tmp,PREC);
       arb_set_d(aa,aout[i]); arb_mul(pow2.data()+i,pow2.data()+i,aa,PREC);
@@ -75,6 +80,6 @@ int main(){
   if(best1){ uint64_t mx=0; int gt1=0,w=0; for(int i=0;i<N;i++){ double y=eval_dd(chi,clo,best1,ain[i]); uint64_t u=ulp(y,rin[i]); if(u>mx){mx=u;w=i;} gt1+=(u>1); } std::printf("CASE1_FIXED_DD TERMS=%d MAX_ULP=%llu GT1=%d/%d WORST_A=%.17g GOT=%.17g REF=%.17g\n",best1,(unsigned long long)mx,gt1,N,ain[w],eval_dd(chi,clo,best1,ain[w]),rin[w]); }
   if(best2){ uint64_t mx=0; int gt1=0,w=0; for(int i=0;i<N;i++){ double y=1.0/(aout[i]-3.0)+1.0/3.0+eval_dd(thi,tlo,best2,aout[i]); uint64_t u=ulp(y,rout[i]); if(u>mx){mx=u;w=i;} gt1+=(u>1); } std::printf("CASE2_FIXED_DD TERMS=%d MAX_ULP=%llu GT1=%d/%d WORST_A=%.17g GOT=%.17g REF=%.17g\n",best2,(unsigned long long)mx,gt1,N,aout[w],1.0/(aout[w]-3.0)+1.0/3.0+eval_dd(thi,tlo,best2,aout[w]),rout[w]); }
 
-  for(int m=0;m<MAXT;m++){arb_clear(C.data()+m);arb_clear(TC.data()+m);} for(int i=0;i<N;i++){arb_clear(sum1.data()+i);arb_clear(pow1.data()+i);arb_clear(sum2.data()+i);arb_clear(pow2.data()+i);arb_clear(base2.data()+i);} arb_clear(ref);arb_clear(ss);arb_clear(aa);arb_clear(tmp);arb_clear(pow3);arb_clear(tc);arb_clear(c);arb_clear(one);arb_poly_clear(z);arb_poly_clear(s);flint_cleanup();
+  for(int m=0;m<MAXT;m++){arb_clear(C.data()+m);arb_clear(TC.data()+m);} for(int i=0;i<N;i++){arb_clear(sum1.data()+i);arb_clear(pow1.data()+i);arb_clear(sum2.data()+i);arb_clear(pow2.data()+i);arb_clear(base2.data()+i);} arb_clear(ref);arb_clear(ss);arb_clear(aa);arb_clear(tmp);arb_clear(pow3);arb_clear(one);arb_poly_clear(z);arb_poly_clear(s);flint_cleanup();
   return 0;
 }
