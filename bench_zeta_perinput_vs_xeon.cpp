@@ -73,6 +73,7 @@ struct Runtime{
         arb_clear(ref);arb_clear(ss);arb_clear(aa);
     }
     double reference_x(double x){arb_set_d(aa,x);arb_zeta(ref,aa,REF_BITS);return arf_get_d(arb_midref(ref),ARF_RND_NEAR);}
+    double reference_a(double a){arb_set_d(aa,a);arb_sub_ui(ss,aa,2,REF_BITS);arb_zeta(ref,ss,REF_BITS);return arf_get_d(arb_midref(ref),ARF_RND_NEAR);}
     double eval_source(double a,int bits){
         int T=terms(a);arf_set_d(av,a);arf_set_round(p,src.data()+T-1,bits,ARF_RND_NEAR);
         for(int m=T-2;m>=0;m--){arf_set_round(coef,src.data()+m,bits,ARF_RND_NEAR);arf_fma(p,p,av,coef,bits,ARF_RND_NEAR);}
@@ -85,7 +86,7 @@ struct Runtime{
         const double f[]={0.015625,0.0625,0.125,0.25,0.375,0.5,0.625,0.75,0.875,0.9375,0.984375};
         for(int b=48;b<BINS;b++){
             double l=b*STEP,r=std::min(102.0,(b+1)*STEP);int mx=53;
-            for(double q:f){double a=l+(r-l)*q;if(a==3.0)a=std::nextafter(3.0,INFINITY);double rr=reference_x(a-2.0);mx=std::max(mx,pmin(a,rr));}
+            for(double q:f){double a=l+(r-l)*q;if(a==3.0)a=std::nextafter(3.0,INFINITY);double rr=reference_a(a);mx=std::max(mx,pmin(a,rr));}
             lut[b]=(uint16_t)mx;
         }
         for(int b=0;b<48;b++)lut[b]=53;
@@ -98,8 +99,8 @@ struct Runtime{
             arf_set_ui(&third[q],1);arf_div_ui(&third[q],&third[q],3,q,ARF_RND_NEAR);
         }
     }
-    double eval_cached(double a,int bits,int T){
-        const auto &c=cc[bits];arf_set_d(av,a);arf_set(p,c.data()+T-1);
+    double eval_cached_x(double x,int bits,int T){
+        const auto &c=cc[bits];arf_set_d(av,x);arf_add_ui(av,av,2,std::max(bits,64),ARF_RND_NEAR);arf_set(p,c.data()+T-1);
         for(int m=T-2;m>=0;m--)arf_fma(p,p,av,c.data()+m,bits,ARF_RND_NEAR);
         arf_mul(p,p,av,bits,ARF_RND_NEAR);arf_sub_ui(base,av,3,bits,ARF_RND_NEAR);arf_ui_div(base,1,base,bits,ARF_RND_NEAR);
         arf_add(p,p,base,bits,ARF_RND_NEAR);arf_add(p,p,&third[bits],bits,ARF_RND_NEAR);return arf_get_d(p,ARF_RND_NEAR);
@@ -113,7 +114,7 @@ struct BatchScratch{
 static void ours_batch(Runtime&r,const std::vector<Input>&in,size_t n,std::vector<double>&out,BatchScratch&s){
     s.ensure(n);for(auto &b:s.buckets)b.clear();
     for(size_t i=0;i<n;i++){double a=in[i].x+2.0;int p=r.precision(a),t=terms(a);s.a[i]=a;s.P[i]=p;s.T[i]=t;s.buckets[p].push_back((int)i);}
-    for(int p=53;p<=MAXP;p++)for(int idx:s.buckets[p])out[idx]=r.eval_cached(s.a[idx],p,s.T[idx]);
+    for(int p=53;p<=MAXP;p++)for(int idx:s.buckets[p])out[idx]=r.eval_cached_x(in[idx].x,p,s.T[idx]);
 }
 static void intel_batch(const std::vector<Input>&in,size_t n,std::vector<double>&out){for(size_t i=0;i<n;i++)out[i]=boost::math::zeta(in[i].x);}
 
@@ -125,7 +126,7 @@ template<class F>static double median_ns(size_t n,int reps,F&&fn,volatile double
 int main(){
     const size_t MAXN=5000;auto in=make_inputs(MAXN);Runtime rt;BatchScratch bs;std::vector<double>o1(MAXN),o2(MAXN);
     uint64_t h=1469598103934665603ULL;for(auto &z:in){h^=std::bit_cast<uint64_t>(z.x);h*=1099511628211ULL;}std::printf("INPUT_HASH=%016llx COUNT=%zu DOMAIN_X=(1,100) SAME_INPUTS=1\n",(unsigned long long)h,in.size());
-    uint64_t mx=0;int gt1=0;for(size_t i=0;i<MAXN;i++){double a=in[i].x+2.0;double y=rt.eval_cached(a,rt.precision(a),terms(a));double ref=rt.reference_x(in[i].x);uint64_t u=ulp(y,ref);mx=std::max(mx,u);gt1+=u>1;}std::printf("OURS_SANITY_MAX_ULP=%llu GT1=%d/%zu\n",(unsigned long long)mx,gt1,MAXN);
+    uint64_t mx=0;int gt1=0;for(size_t i=0;i<MAXN;i++){double ad=in[i].x+2.0;double y=rt.eval_cached_x(in[i].x,rt.precision(ad),terms(ad));double ref=rt.reference_x(in[i].x);uint64_t u=ulp(y,ref);mx=std::max(mx,u);gt1+=u>1;}std::printf("OURS_SANITY_MAX_ULP=%llu GT1=%d/%zu\n",(unsigned long long)mx,gt1,MAXN);
     volatile double sink=0.0;const size_t sizes[]={100,400,800,2000,5000};
     for(size_t n:sizes){
         ours_batch(rt,in,n,o1,bs);intel_batch(in,n,o2);for(int w=0;w<3;w++){ours_batch(rt,in,n,o1,bs);intel_batch(in,n,o2);sink+=o1[w%n]+o2[w%n];}
