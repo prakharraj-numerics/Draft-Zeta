@@ -1,0 +1,25 @@
+name: Derive inside crossover
+on:
+  push:
+    paths:
+      - derive_inside_crossover.cpp
+      - .github/workflows/derive-inside-crossover.yml
+  workflow_dispatch:
+jobs:
+  derive:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FLINT
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build
+        run: g++ -O3 -std=c++20 derive_inside_crossover.cpp -lflint -lmpfr -lgmp -lm -o derive_inside_crossover
+      - name: Derive
+        run: ./derive_inside_crossover 2>&1 | tee crossover.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inside-crossover
+          path: crossover.txt
