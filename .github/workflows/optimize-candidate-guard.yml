@@ -1,0 +1,25 @@
+name: Optimize candidate guard
+on:
+  push:
+    paths:
+      - optimize_candidate_guard.cpp
+      - .github/workflows/optimize-candidate-guard.yml
+  workflow_dispatch:
+jobs:
+  optimize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FLINT
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build
+        run: g++ -O3 -std=c++20 optimize_candidate_guard.cpp -lflint -lmpfr -lgmp -lm -o optimize_guard
+      - name: Test guards 0 1 2 on independent 5000 random inputs
+        run: ./optimize_guard 2>&1 | tee optimize_guard.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optimize-candidate-guard
+          path: optimize_guard.txt
