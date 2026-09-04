@@ -1,0 +1,31 @@
+name: Zeta53 emit static local9 table
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_emit_local9.cpp'
+      - '.github/workflows/zeta53-emit-local9.yml'
+
+jobs:
+  emit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build generator
+        run: |
+          g++ -O2 -march=x86-64 -mavx512f -mavx512dq -mavx512vl -mavx2 -mfma \
+              -std=c++20 -DNDEBUG -fno-fast-math -ffp-contract=off \
+              zeta53_emit_local9.cpp -lflint -lmpfr -lgmp -lm -o emit_local9
+      - name: Generate exact static table
+        run: ./emit_local9 > zeta53_local9_table.h
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeta53-local9-static-table
+          path: zeta53_local9_table.h
