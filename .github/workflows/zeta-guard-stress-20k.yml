@@ -1,0 +1,29 @@
+name: Zeta guard stress 20k
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_guard_stress_20k.cpp'
+      - '.github/workflows/zeta-guard-stress-20k.yml'
+jobs:
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build and run
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -O3 -march=native -std=c++20 -DNDEBUG zeta53_guard_stress_20k.cpp -lflint -lmpfr -lgmp -lm -o stress
+          ./stress 2>&1 | tee result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeta-guard-stress-20k
+          path: result.txt
