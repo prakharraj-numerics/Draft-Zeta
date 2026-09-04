@@ -1,0 +1,29 @@
+name: Zeta Arb ARF trace
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_arb_arf_trace.cpp'
+      - '.github/workflows/zeta-arb-arf-trace.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - name: Build and trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -O3 -std=c++20 zeta53_arb_arf_trace.cpp -lflint -lmpfr -lgmp -lm -o trace
+          ./trace 2>&1 | tee result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeta-arb-arf-trace
+          path: result.txt
