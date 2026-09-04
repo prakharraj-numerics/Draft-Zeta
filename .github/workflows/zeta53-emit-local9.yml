@@ -7,6 +7,9 @@ on:
       - 'zeta53_emit_local9.cpp'
       - '.github/workflows/zeta53-emit-local9.yml'
 
+permissions:
+  contents: write
+
 jobs:
   emit:
     runs-on: ubuntu-24.04
@@ -25,6 +28,18 @@ jobs:
               zeta53_emit_local9.cpp -lflint -lmpfr -lgmp -lm -o emit_local9
       - name: Generate exact static table
         run: ./emit_local9 > zeta53_local9_table.h
+      - name: Commit generated header
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add zeta53_local9_table.h
+          if git diff --cached --quiet; then
+            echo "static table unchanged"
+          else
+            git commit -m "add generated static degree-9 local zeta table"
+            git push origin HEAD:main
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: zeta53-local9-static-table
