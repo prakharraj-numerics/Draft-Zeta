@@ -1,0 +1,23 @@
+name: Dual spine diagnose
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'diagnose_dual_spine.c'
+      - '.github/workflows/dual-spine-diagnose.yml'
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libflint-dev
+      - run: cc -O3 -std=c11 diagnose_dual_spine.c -lflint -lmpfr -lgmp -lm -o diagnose
+      - run: ./diagnose | tee result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dual-spine-diagnose
+          path: result.txt
