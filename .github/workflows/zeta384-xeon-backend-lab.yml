@@ -36,13 +36,23 @@ jobs:
         with:
           path: /opt/intel/oneapi
           key: intel-oneapi-prof3-intel-2026.1.0-236-2026.1.1-325-v1
+      - name: Prepare corrected lab source
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          sed \
+            -e 's/COEFF_BITS=2048/COEFF_BITS=8192/' \
+            -e 's/std::ceil(t)+1/std::ceil(t)+2/' \
+            -e 's/_mm256_set1_epi32(1));q=_mm256_max/_mm256_set1_epi32(2));q=_mm256_max/' \
+            zeta53_384_backend_lab_v2.cpp > /tmp/zeta384_lab.cpp
+          grep -o 'COEFF_BITS=[0-9]*' /tmp/zeta384_lab.cpp | head -1
       - name: Build GCC and ICX
         if: steps.gate.outputs.eligible == '1'
         shell: bash
         run: |
-          g++ -O3 -march=native -std=c++20 -DNDEBUG zeta53_384_backend_lab_v2.cpp -lflint -lmpfr -lgmp -lm -o lab_gcc
+          g++ -O3 -march=native -std=c++20 -DNDEBUG /tmp/zeta384_lab.cpp -lflint -lmpfr -lgmp -lm -o lab_gcc
           if [[ -x /opt/intel/oneapi/compiler/latest/bin/icpx ]]; then
-            /opt/intel/oneapi/compiler/latest/bin/icpx -O3 -march=native -std=c++20 -DNDEBUG -fp-model=precise zeta53_384_backend_lab_v2.cpp -lflint -lmpfr -lgmp -lm -o lab_icx
+            /opt/intel/oneapi/compiler/latest/bin/icpx -O3 -march=native -std=c++20 -DNDEBUG -fp-model=precise /tmp/zeta384_lab.cpp -lflint -lmpfr -lgmp -lm -o lab_icx
           fi
       - name: Run pinned
         if: steps.gate.outputs.eligible == '1'
@@ -54,6 +64,7 @@ jobs:
             lscpu | grep -E 'Model name|CPU\(s\)|Thread|Core|Socket|L[123] cache'
             grep -m1 '^flags' /proc/cpuinfo | grep -o 'avx512[^ ]*' | tr '\n' ' '; echo
             echo "PIN_CPU=$CPU"
+            echo 'CONFIG=source8192_cache384_guard2'
             echo '=== GCC ==='
           } | tee result.txt
           taskset -c "$CPU" ./lab_gcc 2>&1 | tee -a result.txt
