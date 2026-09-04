@@ -1,0 +1,25 @@
+Run: 33906122340
+Job: 101131350541 (probe-and-benchmark shard 9)
+Runner: GitHub-hosted ubuntu-24.04, Azure westus2
+CPU: AMD EPYC 9V45 96-Core Processor
+Vendor: AuthenticAMD
+CPU family: 26
+CPU model: 2
+Visible CPUs: 2 (1 core / 2 threads)
+Architecture: x86_64
+Boost: 1.83
+Implementation: boost::math::zeta<double>
+Compile: g++ -O3 -DNDEBUG -std=c++20 -march=native -fno-fast-math -ffp-contract=off
+Anti-DCE: noinline batch + compiler memory barrier
+Input domain: x in (1,100), noninteger rational fractions
+Input count: 50000
+Input hash: 02903782b3f007a1
+
+BATCH=100 REPS=25000 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=87.543648
+BATCH=500 REPS=5000 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=86.208845
+BATCH=1200 REPS=2084 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=87.393550
+BATCH=4000 REPS=625 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=85.958930
+BATCH=10000 REPS=250 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=87.484214
+BATCH=30000 REPS=84 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=91.441389
+BATCH=50000 REPS=50 EPYC_ZEN5_BOOST_ZETA_NS_PER_INPUT=91.500754
+CHECKSUM=364058.02333491982
