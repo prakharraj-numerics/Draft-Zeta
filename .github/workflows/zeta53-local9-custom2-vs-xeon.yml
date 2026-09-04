@@ -1,10 +1,11 @@
-name: Zeta53 local9 custom2 vs Xeon
+name: Zeta53 production vs Xeon
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
     paths:
       - 'zeta53_custom_2core.hpp'
+      - 'zeta53_batch_production.cpp'
       - 'zeta53_local9_custom2_vs_xeon.cpp'
       - '.github/workflows/zeta53-local9-custom2-vs-xeon.yml'
 
@@ -38,7 +39,7 @@ jobs:
         run: |
           g++ -O3 -march=native -mavx512f -mavx512dq -mavx512vl -mavx2 -mfma -funroll-loops \
               -std=c++20 -DNDEBUG -fno-fast-math -ffp-contract=off -pthread \
-              zeta53_local9_static.cpp zeta53_local9_custom2_vs_xeon.cpp -lm -o zeta53_local9_custom2_vs_xeon
+              zeta53_local9_static.cpp zeta53_batch_production.cpp zeta53_local9_custom2_vs_xeon.cpp -lm -o zeta53_local9_custom2_vs_xeon
       - name: Run verify and benchmark
         if: steps.gate.outputs.eligible == '1'
         shell: bash
@@ -47,12 +48,12 @@ jobs:
             lscpu | grep -E 'Model name|L[123] cache'
             ./zeta53_local9_custom2_vs_xeon verify
             ./zeta53_local9_custom2_vs_xeon raw
-            ./zeta53_local9_custom2_vs_xeon custom2
+            ./zeta53_local9_custom2_vs_xeon production
             ./zeta53_local9_custom2_vs_xeon xeon
           } 2>&1 | tee result.txt
       - name: Upload
         if: always() && steps.gate.outputs.eligible == '1'
         uses: actions/upload-artifact@v4
         with:
-          name: zeta53-local9-custom2-vs-xeon-${{ matrix.slot }}
+          name: zeta53-production-vs-xeon-${{ matrix.slot }}
           path: result.txt
