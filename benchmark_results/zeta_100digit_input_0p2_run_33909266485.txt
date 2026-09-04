@@ -1,0 +1,24 @@
+Run: 33909266485
+Test input (exact decimal, 100 digits after decimal):
+0.2941985713043209300399235901604169090086102839814683810368558602148388472779766010896618679496346082
+
+Binary64 input seen by current machinery:
+0.29419857130432092
+
+Path used:
+UNDERLYING_SERIES_DIRECT_CURRENT_PRECISION
+(Current batch/cache path is provisioned for x>1; this one-off sub-1 probe exercised the same underlying series directly.)
+
+WORK_BITS=56
+TERMS=24
+OURS=-0.8932751074000298
+REF_ZETA_BINARY64_INPUT=-0.8932751074000298
+REF_ZETA_EXACT_100DIGIT_INPUT=-0.8932751074000298
+ULP_OURS_VS_BINARY64_REF=0
+ULP_OURS_VS_EXACT_INPUT_REF=0
+ULP_BINARY64_REF_VS_EXACT_INPUT_REF=0
+
+Exact-input high-precision reference:
+-0.89327510740002982150847968615984147090945719236978484882796173868330982650162025
+
+Conclusion: for this tested 0.2x input with 100 digits after the decimal point, the underlying current Zeta series at the current selected precision produced exactly the same correctly rounded binary64 result as the high-precision Zeta value of the exact 100-digit decimal input (0 ULP difference).
