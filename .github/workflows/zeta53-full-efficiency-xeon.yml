@@ -1,0 +1,181 @@
+name: Zeta53 production vs Xeon full efficiency
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'zeta53_local9_static.cpp'
+      - 'zeta53_local9_table.h'
+      - 'zeta53_custom_2core.hpp'
+      - 'zeta53_batch_production.cpp'
+      - 'zeta53_efficiency_native.cpp'
+      - 'zeta53_efficiency_sde.cpp'
+      - '.github/workflows/zeta53-full-efficiency-xeon.yml'
+
+jobs:
+  benchmark:
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 128
+      matrix:
+        slot: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require exact Intel Xeon 6973P-C + AVX-512
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL="$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+          VENDOR="$(lscpu | awk -F: '/Vendor ID/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+          echo "CPU_MODEL=$MODEL VENDOR=$VENDOR SLOT=${{ matrix.slot }}"
+          if [[ "$VENDOR" == GenuineIntel && "$MODEL" == *"6973P-C"* ]] && grep -m1 '^flags' /proc/cpuinfo | grep -qw avx512f; then
+            echo eligible=1 >> "$GITHUB_OUTPUT"
+            echo ELIGIBLE_EXACT_XEON=1
+          else
+            echo eligible=0 >> "$GITHUB_OUTPUT"
+            echo SKIP_NON_EXACT_XEON
+          fi
+
+      - name: Install prerequisites
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential binutils curl xz-utils libboost-math-dev
+
+      - name: Install Intel SDE 10.13.1
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/zetaeff/sdekit && cd /tmp/zetaeff/sdekit
+          curl -fsSL -o sde.tar.xz https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz
+          echo '94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50  sde.tar.xz' | sha256sum -c -
+          tar -xf sde.tar.xz
+          SDE="$(find /tmp/zetaeff/sdekit -maxdepth 2 -type f -name sde64 -print -quit)"
+          test -x "$SDE"
+          echo "SDE=$SDE" >> "$GITHUB_ENV"
+
+      - name: Build native and SDE harnesses
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/zetaeff/bin
+          COMMON='-O3 -g -march=native -mavx512f -mavx512dq -mavx512vl -mavx2 -mfma -funroll-loops -std=c++20 -DNDEBUG -fno-fast-math -ffp-contract=off -pthread'
+          g++ $COMMON zeta53_local9_static.cpp zeta53_batch_production.cpp zeta53_efficiency_native.cpp -lm -o /tmp/zetaeff/bin/native
+          g++ $COMMON zeta53_local9_static.cpp zeta53_batch_production.cpp zeta53_efficiency_sde.cpp -lm -o /tmp/zetaeff/bin/sdebench
+          nm -n /tmp/zetaeff/bin/sdebench | grep -E ' zeta53_profile_(start|stop)$'
+          {
+            echo "CPU=$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+            echo "SLOT=${{ matrix.slot }}"
+            echo "HEAD=$(git rev-parse HEAD)"
+            echo "INPUT=deterministic_uniform_(1,100)"
+            echo "SIZES=100,500,1200,3000,4000,10000,25000,50000"
+            echo "PRODUCTION=n_lt_500_raw_local9;n_ge_500_lazy_custom2"
+            echo "INTEL=boost_math_zeta_double_on_same_Xeon"
+            echo "CPU_EFF=intel_cpu_ns_el/prod_cpu_ns_el"
+            echo "INSTR_EFF=intel_instr_el/prod_instr_el"
+            echo "MEM_EFF=intel_logical_B_el/prod_logical_B_el"
+          } > /tmp/zetaeff/meta.txt
+
+      - name: Native speed CPU RSS
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/zetaeff/native.txt
+          for n in 100 500 1200 3000 4000 10000 25000 50000; do
+            taskset -c 0,2 /tmp/zetaeff/bin/native prod "$n" | tee -a /tmp/zetaeff/native.txt
+            taskset -c 0 /tmp/zetaeff/bin/native intel "$n" | tee -a /tmp/zetaeff/native.txt
+          done
+
+      - name: SDE instruction and logical-memory profile
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 100 500 1200 3000 4000 10000 25000 50000; do
+            for mode in prod intel noop; do
+              d="/tmp/zetaeff/sde-${mode}-${n}"; mkdir -p "$d"
+              if [[ "$mode" == prod && "$n" -ge 500 ]]; then cpus=0,2; else cpus=0; fi
+              (cd "$d"; taskset -c "$cpus" "$SDE" -mix -iform -global_region \
+                -control 'start:address:zeta53_profile_start,stop:address:zeta53_profile_stop' \
+                -omix mix.txt -- /tmp/zetaeff/bin/sdebench "$mode" "$n" > program.txt)
+            done
+          done
+
+      - name: Aggregate full result
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee /tmp/zetaeff/results.txt
+          import pathlib,re
+          root=pathlib.Path('/tmp/zetaeff')
+          print(root.joinpath('meta.txt').read_text(),end='')
+          sizes=[100,500,1200,3000,4000,10000,25000,50000]
+          p=re.compile(r'ZETA_EFF_NATIVE mode=(prod|intel) n=(\d+) reps=(\d+) wall_ns_el=([0-9.]+) cpu_ns_el=([0-9.]+) effective_cores=([0-9.]+) maxrss_kib=(\d+) helper_expected=(\d+)')
+          native={}
+          for line in root.joinpath('native.txt').read_text().splitlines():
+              m=p.search(line)
+              if m:
+                  native[(m.group(1),int(m.group(2)))]=dict(reps=int(m.group(3)),wall=float(m.group(4)),cpu=float(m.group(5)),cores=float(m.group(6)),rss=int(m.group(7)),helper=int(m.group(8)))
+          missing=[(mode,n) for mode in ('prod','intel') for n in sizes if (mode,n) not in native]
+          if missing: raise SystemExit(f'missing native {missing}')
+
+          def mix(path):
+              text=path.read_text(errors='replace')
+              blocks=re.findall(r'# \$global-dynamic-counts(.*?)# END_GLOBAL_DYNAMIC_STATS',text,re.S)
+              sec=blocks[-1] if blocks else text
+              out={}
+              for k,v in re.findall(r'^\s*(\S+)\s+([0-9]+)\s*$',sec,re.M): out[k]=int(v)
+              if out.get('*total',0)<=0:
+                  ts=[int(x) for x in re.findall(r'^\*total\s+([0-9]+)\s*$',text,re.M)]
+                  if ts: out['*total']=ts[-1]
+              return out
+
+          def logical_bytes(a,b):
+              total=0
+              for k in set(a)|set(b):
+                  m=re.match(r'^\*mem-(?:read|write)-(\d+)$',k)
+                  if m: total += int(m.group(1))*max(0,a.get(k,0)-b.get(k,0))
+              return total
+
+          sde={}
+          for n in sizes:
+              noop=mix(root/f'sde-noop-{n}'/'mix.txt')
+              for mode in ('prod','intel'):
+                  a=mix(root/f'sde-{mode}-{n}'/'mix.txt')
+                  ins=max(0,a.get('*total',0)-noop.get('*total',0))
+                  byt=logical_bytes(a,noop)
+                  sde[(mode,n)]=dict(instr=ins/n,lbytes=byt/n)
+
+          for n in sizes:
+              P,I=native['prod',n],native['intel',n]
+              PS,IS=sde['prod',n],sde['intel',n]
+              speed=I['wall']/P['wall']
+              cpu_eff=I['cpu']/P['cpu']
+              instr_eff=IS['instr']/PS['instr'] if PS['instr'] else float('inf')
+              mem_eff=IS['lbytes']/PS['lbytes'] if PS['lbytes'] else float('inf')
+              rss_eff=I['rss']/P['rss'] if P['rss'] else float('inf')
+              print(f'SUMMARY n={n} prod_wall_ns_el={P["wall"]:.9f} intel_wall_ns_el={I["wall"]:.9f} speed_eff={speed:.6f} prod_cpu_ns_el={P["cpu"]:.9f} intel_cpu_ns_el={I["cpu"]:.9f} cpu_eff={cpu_eff:.6f} prod_effective_cores={P["cores"]:.6f} intel_effective_cores={I["cores"]:.6f} prod_instr_el={PS["instr"]:.9f} intel_instr_el={IS["instr"]:.9f} instr_eff={instr_eff:.6f} prod_logical_B_el={PS["lbytes"]:.9f} intel_logical_B_el={IS["lbytes"]:.9f} mem_eff={mem_eff:.6f} prod_maxrss_kib={P["rss"]} intel_maxrss_kib={I["rss"]} rss_eff={rss_eff:.6f} helper={P["helper"]}')
+          PY
+
+      - name: Upload full result
+        if: always() && steps.gate.outputs.eligible == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeta53-full-efficiency-${{ matrix.slot }}
+          path: |
+            /tmp/zetaeff/meta.txt
+            /tmp/zetaeff/native.txt
+            /tmp/zetaeff/results.txt
