@@ -1,0 +1,110 @@
+name: Final BASE vs Xeon production metrics
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'bench_final_base_vs_xeon_metrics.cpp'
+      - '.github/workflows/final-base-vs-xeon-metrics.yml'
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]
+    env:
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      MKL_DYNAMIC: 'FALSE'
+      OPENBLAS_NUM_THREADS: '1'
+      NUMEXPR_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gate exact Xeon 6973P-C
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL="$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+          VENDOR="$(lscpu | awk -F: '/Vendor ID/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+          echo "CPU_MODEL=$MODEL VENDOR=$VENDOR SLOT=${{ matrix.slot }}"
+          if [[ "$VENDOR" == "GenuineIntel" && "$MODEL" == *"6973P-C"* ]] && grep -m1 '^flags' /proc/cpuinfo | grep -qw avx512f; then
+            echo eligible=1 >> "$GITHUB_OUTPUT"
+          else
+            echo eligible=0 >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.gate.outputs.eligible == '1'
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libboost-math-dev linux-tools-common linux-tools-generic time wget ca-certificates gpg-agent
+
+      - name: Cache Intel oneAPI
+        if: steps.gate.outputs.eligible == '1'
+        uses: actions/cache@v4
+        with:
+          path: /opt/intel/oneapi
+          key: intel-oneapi-prof3-intel-2026.1.0-236-2026.1.1-325-v1
+
+      - name: Ensure Intel compiler
+        if: steps.gate.outputs.eligible == '1'
+        run: |
+          set -euo pipefail
+          if [[ ! -x /opt/intel/oneapi/compiler/latest/bin/icpx ]]; then
+            wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg >/dev/null
+            echo 'deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main' | sudo tee /etc/apt/sources.list.d/oneAPI.list >/dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends intel-oneapi-compiler-dpcpp-cpp
+          fi
+          /opt/intel/oneapi/compiler/latest/bin/icpx --version
+
+      - name: Build final benchmark
+        if: steps.gate.outputs.eligible == '1'
+        run: |
+          set -euo pipefail
+          CXX=/opt/intel/oneapi/compiler/latest/bin/icpx
+          "$CXX" -O3 -march=native -std=c++20 -DNDEBUG -fp-model=precise -fno-fast-math -ffp-contract=fast \
+            crypto_zeta53_base.cpp bench_final_base_vs_xeon_metrics.cpp -o /tmp/final_zeta_bench
+
+      - name: Run final metrics
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CPU=$(taskset -pc $$ | sed 's/.*: //' | cut -d, -f1 | cut -d- -f1)
+          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+          PERF=$(command -v perf || true)
+          {
+            echo "CPU=$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+            echo "HEAD=$(git rev-parse HEAD)"
+            echo "PIN_CPU=$CPU THREADS=1"
+            echo "COMPILER=$(/opt/intel/oneapi/compiler/latest/bin/icpx --version | head -1)"
+            echo "PERF=$PERF"
+            for n in 100 400 1000 5000 20000 40000 70000 200000 500000 1000000; do
+              for impl in base boost; do
+                taskset -c "$CPU" /tmp/final_zeta_bench "$impl" "$n" speed
+                echo "RESOURCE_BEGIN impl=$impl n=$n"
+                if [[ -n "$PERF" ]]; then
+                  taskset -c "$CPU" "$PERF" stat -x, -e cycles,instructions,branches,branch-misses,cache-references,cache-misses \
+                    /usr/bin/time -f "MAXRSS_KB=%M" /tmp/final_zeta_bench "$impl" "$n" counter 2>&1 || true
+                else
+                  taskset -c "$CPU" /usr/bin/time -f "MAXRSS_KB=%M" /tmp/final_zeta_bench "$impl" "$n" counter 2>&1
+                fi
+                echo "RESOURCE_END impl=$impl n=$n"
+              done
+            done
+          } | tee /tmp/final_metrics.txt
+
+      - name: Upload result
+        if: steps.gate.outputs.eligible == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-base-vs-xeon-${{ matrix.slot }}
+          path: /tmp/final_metrics.txt
