@@ -36,7 +36,7 @@ static double median(std::vector<double>& x) {
 
 int main(int argc, char** argv) {
     if (argc != 4) {
-        std::fprintf(stderr, "usage: %s base|boost N speed|counter\n", argv[0]);
+        std::fprintf(stderr, "usage: %s base|boost N speed|counter|instrument\n", argv[0]);
         return 2;
     }
     const std::string which = argv[1];
@@ -52,8 +52,11 @@ int main(int argc, char** argv) {
     for (std::size_t i=0;i<n;++i) x[i]=seed[i%seed.size()];
 
     volatile double sink = 0.0;
-    const std::size_t warm = std::max<std::size_t>(1, 200000/n);
-    for (std::size_t r=0;r<warm;++r) { fn(x.data(),n,y.data()); sink += y[r%n]; }
+    // Skip the long warmup for instrumentation: it would pollute dynamic counts.
+    if (mode != "instrument") {
+        const std::size_t warm = std::max<std::size_t>(1, 200000/n);
+        for (std::size_t r=0;r<warm;++r) { fn(x.data(),n,y.data()); sink += y[r%n]; }
+    }
 
     if (mode == "speed") {
         const std::size_t reps = std::max<std::size_t>(1, 3000000/n);
@@ -67,7 +70,6 @@ int main(int argc, char** argv) {
         }
         std::printf("SPEED impl=%s n=%zu ns_per_el=%.9f evals=%zu\n",which.c_str(),n,median(samples),reps*n);
     } else if (mode == "counter") {
-        // Long, fixed-work interval for perf stat.  >=10M evaluations stabilizes counters.
         const std::size_t reps = std::max<std::size_t>(1, 10000000/n);
         auto t0=std::chrono::steady_clock::now();
         for(std::size_t r=0;r<reps;++r){fn(x.data(),n,y.data()); sink += y[r%n];}
@@ -75,6 +77,14 @@ int main(int argc, char** argv) {
         const std::size_t evals=reps*n;
         const double ns=std::chrono::duration<double,std::nano>(t1-t0).count()/double(evals);
         std::printf("COUNTER impl=%s n=%zu ns_per_el=%.9f evals=%zu sink=%.17g\n",which.c_str(),n,ns,evals,(double)sink);
+    } else if (mode == "instrument") {
+        // Cachegrind/Callgrind-friendly fixed work.  At least 100k evaluations,
+        // but one whole batch for large n.  Setup counts are amortized and are
+        // identical in structure for BASE and Boost.
+        const std::size_t reps = std::max<std::size_t>(1, 100000/n);
+        for(std::size_t r=0;r<reps;++r){fn(x.data(),n,y.data()); sink += y[r%n];}
+        const std::size_t evals=reps*n;
+        std::printf("INSTRUMENT impl=%s n=%zu evals=%zu sink=%.17g\n",which.c_str(),n,evals,(double)sink);
     } else return 4;
     if (sink==123.0) std::puts("");
     return 0;
