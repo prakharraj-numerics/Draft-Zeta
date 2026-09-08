@@ -1,0 +1,95 @@
+name: Crypto vs Intel Xeon zeta speed
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'crypto_zeta53.cpp'
+      - 'bench_crypto_vs_xeon.cpp'
+      - 'zeta53_local9_static.cpp'
+      - 'zeta53_local9_table.h'
+      - '.github/workflows/crypto-vs-xeon-speed.yml'
+
+jobs:
+  bench:
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 64
+      matrix:
+        slot: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require exact Intel Xeon 6973P-C + AVX-512
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL="$(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2);print $2;exit}')"
+          echo "CPU_MODEL=$MODEL"
+          if [[ "$MODEL" == *"6973P-C"* ]] && grep -m1 '^flags' /proc/cpuinfo | grep -qw avx512f; then
+            echo eligible=1 >> "$GITHUB_OUTPUT"
+            echo "ELIGIBLE_XEON_6973PC=1 slot=${{ matrix.slot }}"
+          else
+            echo eligible=0 >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Boost
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \( -iname '*microsoft*' -o -iname '*azure*' \) -delete || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libboost-all-dev wget ca-certificates gpg-agent
+
+      - name: Restore Intel oneAPI
+        if: steps.gate.outputs.eligible == '1'
+        id: oneapi
+        uses: actions/cache@v4
+        with:
+          path: /opt/intel/oneapi
+          key: intel-oneapi-prof3-intel-2026.1.0-236-2026.1.1-325-v1
+
+      - name: Install Intel oneAPI on cache miss
+        if: steps.gate.outputs.eligible == '1' && steps.oneapi.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main' | sudo tee /etc/apt/sources.list.d/oneAPI.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends intel-oneapi-compiler-dpcpp-cpp intel-oneapi-mkl-devel
+
+      - name: Build crypto and Intel baseline
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CXX=/opt/intel/oneapi/compiler/latest/bin/icpx
+          "$CXX" --version
+          "$CXX" -O3 -march=native -std=c++20 -DNDEBUG -fp-model=precise -fno-fast-math \
+            zeta53_local9_static.cpp crypto_zeta53.cpp bench_crypto_vs_xeon.cpp -o crypto_vs_xeon
+
+      - name: Run single-thread pinned comparison
+        if: steps.gate.outputs.eligible == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== CPU ==='
+          lscpu | grep -E 'Model name|Socket|Core|Thread|CPU\(s\)'
+          CPU=$(taskset -pc $$ | sed 's/.*: //' | cut -d, -f1 | cut -d- -f1)
+          echo "PIN_CPU=$CPU"
+          OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
+            taskset -c "$CPU" ./crypto_vs_xeon | tee crypto_vs_xeon_result.txt
+
+      - name: Upload result
+        if: steps.gate.outputs.eligible == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypto-vs-xeon-slot-${{ matrix.slot }}
+          path: crypto_vs_xeon_result.txt
