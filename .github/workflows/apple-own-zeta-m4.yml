@@ -1,0 +1,102 @@
+name: Apple own zeta on M4+
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/apple-own-zeta-m4.yml'
+      - 'apple_m_crypto_zeta53_base_copy.cpp'
+
+jobs:
+  bench:
+    runs-on: nscloud-macos-tahoe-arm64-6x14
+    timeout-minutes: 20
+    env:
+      VECLIB_MAXIMUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Apple M4 or later
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          sysctl -n machdep.cpu.brand_string || true
+          system_profiler SPHardwareDataType || true
+          BRAND="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)"
+          if [[ "$BRAND" != *"Apple M4"* && "$BRAND" != *"Apple M5"* && "$BRAND" != *"Apple M6"* ]]; then
+            echo "Not M4-or-later: $BRAND" >&2
+            exit 1
+          fi
+
+      - name: Build Apple own zeta benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/apple_own_zeta.cpp <<'CPP'
+          #include <algorithm>
+          #include <chrono>
+          #include <cmath>
+          #include <cstddef>
+          #include <cstdio>
+          #include <random>
+          #include <vector>
+
+          static std::vector<double> make_base() {
+              std::mt19937_64 rng(0x5A17A20260908ULL);
+              std::uniform_real_distribution<double> dist(1.000001, 99.999999);
+              std::vector<double> v; v.reserve(1000);
+              while (v.size() < 1000) {
+                  double x = dist(rng);
+                  if (std::floor(x) != x) v.push_back(x);
+              }
+              return v;
+          }
+
+          static inline double apple_zeta(double x) {
+              return std::riemann_zeta(x);
+          }
+
+          static double median(std::vector<double>& v) {
+              std::sort(v.begin(), v.end());
+              return v[v.size()/2];
+          }
+
+          int main() {
+              auto base = make_base();
+              const std::size_t batches[] = {100,400,1000,5000,20000,40000,70000,200000,500000,1000000};
+              for (std::size_t n : batches) {
+                  std::vector<double> x(n), y(n);
+                  for (std::size_t i=0;i<n;++i) x[i]=base[i%base.size()];
+                  const std::size_t warm = std::max<std::size_t>(1,200000/n);
+                  const std::size_t reps = std::max<std::size_t>(1,3000000/n);
+                  volatile double sink=0;
+                  for(std::size_t r=0;r<warm;++r){for(std::size_t i=0;i<n;++i)y[i]=apple_zeta(x[i]);sink+=y[r%n];}
+                  std::vector<double> samples;
+                  for(int s=0;s<11;++s){
+                      auto t0=std::chrono::steady_clock::now();
+                      for(std::size_t r=0;r<reps;++r){for(std::size_t i=0;i<n;++i)y[i]=apple_zeta(x[i]);sink+=y[(r+s)%n];}
+                      auto t1=std::chrono::steady_clock::now();
+                      samples.push_back(std::chrono::duration<double,std::nano>(t1-t0).count()/double(reps*n));
+                  }
+                  std::printf("APPLE_OWN n=%zu ns_per_el=%.9f\n",n,median(samples));
+                  if(sink==123.0) std::puts("");
+              }
+          }
+          CPP
+          xcrun clang++ -O3 -mcpu=native -std=c++20 -DNDEBUG /tmp/apple_own_zeta.cpp -o /tmp/apple_own_zeta
+          xcrun clang++ --version
+
+      - name: Run Apple own zeta only
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/apple_own_zeta | tee /tmp/apple-own-zeta-results.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-own-zeta-m4
+          path: /tmp/apple-own-zeta-results.txt
